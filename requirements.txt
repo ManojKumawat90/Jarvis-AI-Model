@@ -1,0 +1,16 @@
+# Audio
+sounddevice>=0.4.6
+numpy>=1.24.0
+
+# Speech recognition (requires PyAudio)
+SpeechRecognition>=3.10.0
+# PyAudio install on macOS M3:
+#   brew install portaudio
+#   pip install pyaudio
+pyaudio>=0.2.13
+
+# TTS: ElevenLabs Daniel voice
+elevenlabs>=2.51.0
+
+# AI backend: the `claude` CLI (claude.ai login) — no API key needed
+# Install Claude Code CLI from: https://claude.ai/code
