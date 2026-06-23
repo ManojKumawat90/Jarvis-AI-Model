@@ -9,8 +9,15 @@ SpeechRecognition>=3.10.0
 #   pip install pyaudio
 pyaudio>=0.2.13
 
-# TTS: ElevenLabs Daniel voice
+# TTS: ElevenLabs Daniel voice (English)
 elevenlabs>=2.51.0
+
+# TTS: edge-tts — Indian male Hindi voice (hi-IN-MadhurNeural), free, no API key needed
+edge-tts>=7.2.0
+
+# UI
+pygame>=2.6.0
+psutil>=5.9.0
 
 # AI backend: the `claude` CLI (claude.ai login) — no API key needed
 # Install Claude Code CLI from: https://claude.ai/code

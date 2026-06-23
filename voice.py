@@ -1,7 +1,12 @@
 """
-VoiceEngine — ElevenLabs TTS (Daniel voice) with macOS `say -v Daniel` fallback.
-Also provides the Iron Man activation beep and Google STT.
+VoiceEngine
+  English TTS : ElevenLabs Daniel  →  macOS Daniel/Samantha  (fallback)
+  Hindi TTS   : edge-tts MadhurNeural (Indian male, neural, free)
+                →  macOS Lekha  (offline fallback)
+  STT         : Google Speech Recognition (en-IN / hi-IN)
+  Activation  : Iron Man beep
 """
+import asyncio
 import os
 import subprocess
 import tempfile
@@ -15,11 +20,19 @@ import speech_recognition as sr
 
 from config import ELEVENLABS_API_KEY, LISTEN_TIMEOUT, LISTEN_MAX_PHRASE
 
+# ── ElevenLabs (English) ──────────────────────────────────────────────────────
 _DANIEL_VOICE_ID_FALLBACK = "onwK4e9ZLuTAKqWW03F9"
-_EL_MODEL       = "eleven_turbo_v2_5"
-_EL_STABILITY   = 0.75
-_EL_SIMILARITY  = 0.85
+_EL_MODEL      = "eleven_turbo_v2_5"
+_EL_STABILITY  = 0.75
+_EL_SIMILARITY = 0.85
 
+# ── edge-tts (Hindi) ──────────────────────────────────────────────────────────
+# hi-IN-MadhurNeural: Indian male, deep, warm, authoritative — Microsoft Neural TTS
+_EDGE_HINDI_VOICE = "hi-IN-MadhurNeural"
+_EDGE_HINDI_RATE  = "-3%"   # slight slow-down for natural cadence
+_EDGE_HINDI_PITCH = "-5Hz"  # slightly deeper
+
+# ── Beep ──────────────────────────────────────────────────────────────────────
 _BEEP_FREQS = [(440, 0.09), (880, 0.09), (1318, 0.13)]
 _BEEP_SR    = 44100
 
@@ -45,22 +58,38 @@ _BEEP_AUDIO = _build_beep()
 
 class VoiceEngine:
     def __init__(self):
+        # ── Language ──────────────────────────────────────────────────────────
+        self.language = "en"   # "en" or "hi"
+
         # ── STT ──────────────────────────────────────────────────────────────
         self._rec = sr.Recognizer()
         self._rec.energy_threshold        = 300
         self._rec.dynamic_energy_threshold = True
         self._rec.pause_threshold         = 0.8
 
-        # ── TTS ──────────────────────────────────────────────────────────────
+        # ── TTS (English) ─────────────────────────────────────────────────────
         self._tts_proc: Optional[subprocess.Popen] = None
         self._el_client  = None
         self._voice_id   = _DANIEL_VOICE_ID_FALLBACK
         self._el_ready   = False
 
-        self._mac_voice  = self._detect_mac_voice()
+        # ── TTS (Hindi) ───────────────────────────────────────────────────────
+        self._edge_ready      = self._check_edge_tts()
+        self._mac_voice       = self._detect_mac_voice()
+        self._mac_hindi_voice = self._detect_mac_hindi_voice()
+
         threading.Thread(target=self._init_elevenlabs, daemon=True).start()
 
-    # ─────────────────────────── init ────────────────────────────────────────
+    # ─────────────────────────── detection ───────────────────────────────────
+
+    def _check_edge_tts(self) -> bool:
+        try:
+            import edge_tts  # noqa: F401
+            print(f"[JARVIS] Hindi TTS: edge-tts ready ({_EDGE_HINDI_VOICE})")
+            return True
+        except ImportError:
+            print("[JARVIS] Hindi TTS: edge-tts not installed (pip install edge-tts)")
+            return False
 
     def _detect_mac_voice(self) -> str:
         try:
@@ -71,22 +100,47 @@ class VoiceEngine:
             pass
         return "Samantha"
 
+    def _detect_mac_hindi_voice(self) -> str:
+        """macOS Hindi voice — offline fallback only."""
+        try:
+            result = subprocess.run(["say", "-v", "?"], capture_output=True, text=True)
+            lines = result.stdout.lower().splitlines()
+            for name in ("kiran", "arjun"):
+                if any(name in line for line in lines):
+                    return name.title()
+            if any("lekha" in line for line in lines):
+                return "Lekha"
+        except Exception:
+            pass
+        return ""
+
+    def set_language(self, lang: str):
+        """Switch STT/TTS language: 'en' or 'hi'."""
+        self.language = lang
+        print(f"[JARVIS] Language → {'Hindi' if lang == 'hi' else 'English'}")
+
+    @staticmethod
+    def _is_hindi(text: str) -> bool:
+        return any('ऀ' <= c <= 'ॿ' for c in text)
+
+    # ─────────────────────────── ElevenLabs init ─────────────────────────────
+
     def _init_elevenlabs(self):
         if not ELEVENLABS_API_KEY:
-            print(f"[JARVIS] TTS: no ELEVENLABS_API_KEY — using macOS {self._mac_voice}")
+            print(f"[JARVIS] English TTS: no API key — using macOS {self._mac_voice}")
             return
         try:
             from elevenlabs.client import ElevenLabs
             from elevenlabs import VoiceSettings  # noqa: F401
             self._el_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
             resp = self._el_client.voices.get_all()
-            match = next((v for v in resp.voices if v.name.lower().startswith("daniel")), None)
-            if match:
-                self._voice_id = match.voice_id
+            daniel = next((v for v in resp.voices if v.name.lower().startswith("daniel")), None)
+            if daniel:
+                self._voice_id = daniel.voice_id
             self._el_ready = True
-            print(f"[JARVIS] TTS: ElevenLabs Daniel ready (id={self._voice_id})")
+            print(f"[JARVIS] English TTS: ElevenLabs Daniel ready (id={self._voice_id[:12]}…)")
         except Exception as exc:
-            print(f"[JARVIS] TTS: ElevenLabs unavailable ({exc}) — using macOS {self._mac_voice}")
+            print(f"[JARVIS] English TTS: ElevenLabs unavailable ({exc}) — using macOS")
 
     # ─────────────────────────── activation beep ─────────────────────────────
 
@@ -96,23 +150,103 @@ class VoiceEngine:
         except Exception as exc:
             print(f"[JARVIS] Beep error: {exc}")
 
-    # ─────────────────────────── TTS ─────────────────────────────────────────
+    # ─────────────────────────── TTS dispatcher ──────────────────────────────
 
     def speak_sync(self, text: str, interrupt_event: Optional[threading.Event] = None):
-        """Speak text, returning immediately if interrupt_event is set. Raises InterruptedError."""
+        """Speak text; raises InterruptedError if interrupted."""
         self.stop_speaking()
-        if self._el_ready and self._el_client:
-            self._speak_elevenlabs(text, interrupt_event=interrupt_event)
+
+        if self._is_hindi(text):
+            # Hindi: edge-tts MadhurNeural → macOS Hindi → macOS default
+            if self._edge_ready:
+                self._speak_edge(text, interrupt_event=interrupt_event)
+            elif self._mac_hindi_voice:
+                self._speak_macos(text, voice=self._mac_hindi_voice,
+                                  rate="145", interrupt_event=interrupt_event)
+            else:
+                self._speak_macos(text, interrupt_event=interrupt_event)
         else:
-            self._speak_macos(text, interrupt_event=interrupt_event)
+            # English: ElevenLabs Daniel → macOS Daniel/Samantha
+            if self._el_ready and self._el_client:
+                self._speak_elevenlabs(text, interrupt_event=interrupt_event)
+            else:
+                self._speak_macos(text, interrupt_event=interrupt_event)
 
     def stop_speaking(self):
         if self._tts_proc and self._tts_proc.poll() is None:
             self._tts_proc.terminate()
             self._tts_proc = None
 
+    # ─────────────────────────── edge-tts (Hindi) ────────────────────────────
+
+    def _speak_edge(self, text: str, interrupt_event: Optional[threading.Event] = None):
+        """edge-tts → hi-IN-MadhurNeural (Indian male, neural)."""
+        try:
+            import edge_tts
+
+            tmp_path: list = [None]
+            dl_error: list = [None]
+            dl_done = threading.Event()
+
+            def _generate():
+                try:
+                    communicate = edge_tts.Communicate(
+                        text=text,
+                        voice=_EDGE_HINDI_VOICE,
+                        rate=_EDGE_HINDI_RATE,
+                        pitch=_EDGE_HINDI_PITCH,
+                    )
+                    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+                        tmp_path[0] = f.name
+
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(communicate.save(tmp_path[0]))
+                    loop.close()
+                except Exception as exc:
+                    dl_error[0] = exc
+                finally:
+                    dl_done.set()
+
+            threading.Thread(target=_generate, daemon=True).start()
+
+            while not dl_done.wait(timeout=0.1):
+                if interrupt_event and interrupt_event.is_set():
+                    raise InterruptedError
+
+            if dl_error[0]:
+                raise dl_error[0]
+
+            self._tts_proc = subprocess.Popen(
+                ["afplay", tmp_path[0]],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            try:
+                self._wait_proc(self._tts_proc, interrupt_event)
+            finally:
+                try:
+                    os.unlink(tmp_path[0])
+                except OSError:
+                    pass
+
+        except InterruptedError:
+            raise
+        except Exception as exc:
+            print(f"[JARVIS] edge-tts error: {exc} — falling back to macOS")
+            voice = self._mac_hindi_voice or self._mac_voice
+            self._speak_macos(text, voice=voice, interrupt_event=interrupt_event)
+
+    # ─────────────────────────── macOS say ───────────────────────────────────
+
+    def _speak_macos(self, text: str, voice: Optional[str] = None,
+                     rate: str = "175", interrupt_event: Optional[threading.Event] = None):
+        v = voice or self._mac_voice
+        self._tts_proc = subprocess.Popen(
+            ["say", "-v", v, "-r", rate, text],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        self._wait_proc(self._tts_proc, interrupt_event)
+
     def _wait_proc(self, proc: subprocess.Popen, interrupt_event: Optional[threading.Event] = None):
-        """Poll subprocess every 50 ms; kill and raise InterruptedError if interrupted."""
         while proc.poll() is None:
             if interrupt_event and interrupt_event.is_set():
                 proc.kill()
@@ -120,17 +254,11 @@ class VoiceEngine:
                 raise InterruptedError
             time.sleep(0.05)
 
-    def _speak_macos(self, text: str, interrupt_event: Optional[threading.Event] = None):
-        self._tts_proc = subprocess.Popen(
-            ["say", "-v", self._mac_voice, "-r", "175", text],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        self._wait_proc(self._tts_proc, interrupt_event)
+    # ─────────────────────────── ElevenLabs (English) ────────────────────────
 
     def _speak_elevenlabs(self, text: str, interrupt_event: Optional[threading.Event] = None):
         from elevenlabs import VoiceSettings
         try:
-            # Download audio on a background thread so we can interrupt during fetch
             tmp_path: list = [None]
             dl_error: list = [None]
             dl_done = threading.Event()
@@ -159,7 +287,6 @@ class VoiceEngine:
 
             threading.Thread(target=_download, daemon=True).start()
 
-            # Wait for download, checking interrupt every 100 ms
             while not dl_done.wait(timeout=0.1):
                 if interrupt_event and interrupt_event.is_set():
                     raise InterruptedError
@@ -182,7 +309,7 @@ class VoiceEngine:
         except InterruptedError:
             raise
         except Exception as exc:
-            print(f"[JARVIS] ElevenLabs speak error: {exc} — falling back")
+            print(f"[JARVIS] ElevenLabs error: {exc} — falling back to macOS")
             self._speak_macos(text, interrupt_event=interrupt_event)
 
     # ─────────────────────────── STT ─────────────────────────────────────────
@@ -204,7 +331,9 @@ class VoiceEngine:
                         timeout=LISTEN_TIMEOUT,
                         phrase_time_limit=LISTEN_MAX_PHRASE,
                     )
-                    result[0] = self._rec.recognize_google(audio).lower()
+                    lang_code = "hi-IN" if self.language == "hi" else "en-IN"
+                    recognized = self._rec.recognize_google(audio, language=lang_code)
+                    result[0] = recognized if self.language == "hi" else recognized.lower()
                 except (sr.WaitTimeoutError, sr.UnknownValueError, sr.RequestError):
                     pass
                 finally:

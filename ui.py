@@ -138,11 +138,12 @@ class _SysStats:
 # ── Main UI class ─────────────────────────────────────────────────────────────
 
 class JarvisUI:
-    on_activate:  Optional[Callable] = None
-    on_sleep:     Optional[Callable] = None
-    on_reset:     Optional[Callable] = None
-    on_cmd:       Optional[Callable] = None   # called with text when user submits cmd
-    on_interrupt: Optional[Callable] = None   # cancel current think/speak, stay in session
+    on_activate:    Optional[Callable] = None
+    on_sleep:       Optional[Callable] = None
+    on_reset:       Optional[Callable] = None
+    on_cmd:         Optional[Callable] = None   # called with text when user submits cmd
+    on_interrupt:   Optional[Callable] = None   # cancel current think/speak, stay in session
+    on_lang_toggle: Optional[Callable] = None   # toggle EN/HI language mode
 
     def __init__(self):
         self._state       = "IDLE"
@@ -162,6 +163,9 @@ class JarvisUI:
         self._log: List[Tuple[str, str, str]] = []
         self._log_scroll  = 0        # pixel scroll offset
         self._log_max_scroll = 0
+
+        # Language display ("EN" or "HI")
+        self._lang_display = "EN"
 
         # Text input
         self._input_text  = ""
@@ -304,6 +308,7 @@ class JarvisUI:
             "activate": pygame.Rect(16,  btn_y, 148, 28),
             "sleep":    pygame.Rect(172, btn_y, 110, 28),
             "reset":    pygame.Rect(290, btn_y, 100, 28),
+            "lang":     pygame.Rect(398, btn_y,  72, 28),
         }
 
         # Quick-command buttons (right panel)
@@ -745,10 +750,13 @@ class JarvisUI:
 
         mp = pygame.mouse.get_pos()
         busy = self._state in ("THINKING", "SPEAKING")
+        lang_lbl = "हि  HI" if self._lang_display == "HI" else "EN  🌐"
+        lang_col = GOLD if self._lang_display == "HI" else ACCENT
         labels = {
             "activate": ("◉  ACTIVATE", GREEN),
             "sleep":    ("⊘  STOP", RED) if busy else ("◌  SLEEP", GOLD),
             "reset":    ("↺  RESET",    TEXT),
+            "lang":     (lang_lbl,      lang_col),
         }
         for action, rect in self._btn_rects.items():
             lbl, fg = labels[action]
@@ -870,8 +878,12 @@ class JarvisUI:
         # Bottom buttons
         for action, rect in self._btn_rects.items():
             if rect.collidepoint(pos):
-                cb = getattr(self, f"on_{action}", None)
-                if cb: threading.Thread(target=cb, daemon=True).start()
+                if action == "lang":
+                    cb = self.on_lang_toggle
+                else:
+                    cb = getattr(self, f"on_{action}", None)
+                if cb:
+                    threading.Thread(target=cb, daemon=True).start()
                 return True
         # Quick intel
         for rect, cmd, _ in self._quick_rects:
@@ -937,6 +949,10 @@ class JarvisUI:
             cur = self._response_text
             self._response_text = ("" if cur == "—" else cur) + chunk
         self._cmd_q.put(_do)
+
+    def set_lang(self, lang: str):
+        """Update the language indicator: 'EN' or 'HI'."""
+        self._cmd_q.put(lambda: setattr(self, '_lang_display', lang))
 
     def add_to_log(self, role: str, text: str):
         ts = datetime.now().strftime("%H:%M")

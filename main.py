@@ -13,19 +13,27 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from config import SLEEP_PHRASES
+from config import SLEEP_PHRASES, HINDI_SLEEP_PHRASES
 from clap_detector import ClapDetector, WakeWordDetector
 from voice import VoiceEngine
 from brain import JarvisBrain
 from ui import JarvisUI
 
 
-def _time_period() -> str:
+def _time_period(lang: str = "en") -> str:
     h = datetime.now().hour
+    if lang == "hi":
+        return "सुबह" if h < 12 else ("दोपहर" if h < 17 else "शाम")
     return "morning" if h < 12 else ("afternoon" if h < 17 else "evening")
 
 
-def _greeting() -> str:
+def _greeting(lang: str = "en") -> str:
+    if lang == "hi":
+        return (
+            f"शुभ {_time_period('hi')}, Manu sir। "
+            "सभी सिस्टम तैयार हैं। "
+            "बताइए, मैं आपकी क्या मदद कर सकता हूँ?"
+        )
     return (
         f"Good {_time_period()}, Manu. "
         "All systems are online. "
@@ -33,7 +41,9 @@ def _greeting() -> str:
     )
 
 
-def _farewell() -> str:
+def _farewell(lang: str = "en") -> str:
+    if lang == "hi":
+        return "ठीक है, Manu sir। जब भी जरूरत हो, मैं हाजिर हूँ।"
     return "Very good, Sir. I shall be here when you need me. Good day."
 
 
@@ -55,11 +65,12 @@ class JARVIS:
             on_level=self._ui.update_level,
         )
         self._wake = WakeWordDetector(on_wake=self._on_activate)  # no-op stub
-        self._ui.on_activate  = self._on_activate
-        self._ui.on_sleep     = self._on_sleep
-        self._ui.on_reset     = self._on_reset
-        self._ui.on_cmd       = self._on_typed_cmd
-        self._ui.on_interrupt = self._on_interrupt
+        self._ui.on_activate    = self._on_activate
+        self._ui.on_sleep       = self._on_sleep
+        self._ui.on_reset       = self._on_reset
+        self._ui.on_cmd         = self._on_typed_cmd
+        self._ui.on_interrupt   = self._on_interrupt
+        self._ui.on_lang_toggle = self._on_lang_toggle
         self._pending_cmd: Optional[str] = None
 
     # ─────────────────────── handlers ────────────────────────────────────────
@@ -99,6 +110,17 @@ class JARVIS:
         self._brain.reset()
         print("[JARVIS] ↺  Memory cleared")
         self._ui.set_status("Conversation memory cleared, Sir.")
+
+    def _on_lang_toggle(self):
+        new_lang = "hi" if self._voice.language == "en" else "en"
+        self._voice.set_language(new_lang)
+        self._ui.set_lang("HI" if new_lang == "hi" else "EN")
+        if new_lang == "hi":
+            self._ui.set_status("हिंदी मोड सक्रिय, Manu sir।")
+            print("[JARVIS] 🇮🇳  Hindi mode active")
+        else:
+            self._ui.set_status("English mode active, Sir.")
+            print("[JARVIS] 🇬🇧  English mode active")
 
     def _on_typed_cmd(self, text: str):
         """Handle a command typed in the UI input box."""
@@ -156,7 +178,7 @@ class JARVIS:
         self._ui.set_state("LISTENING")
         self._ui.show("JARVIS  ONLINE")
         time.sleep(0.55)
-        welcome = _greeting()
+        welcome = _greeting(self._voice.language)
         self._ui.set_state("SPEAKING")
         self._ui.set_status(welcome)
         print(f"[JARVIS] Greeting: {welcome}")
@@ -200,7 +222,10 @@ class JARVIS:
             if self._interrupt.is_set():
                 continue
             if text is None:
-                self._ui.set_status("I didn't catch that, Sir. Please try again.")
+                if self._voice.language == "hi":
+                    self._ui.set_status("समझ नहीं आया, Manu sir। कृपया दोबारा कहें।")
+                else:
+                    self._ui.set_status("I didn't catch that, Sir. Please try again.")
                 continue
 
             print(f"[JARVIS] {'Typed' if typed else 'Heard'}: '{text}'")
@@ -209,7 +234,8 @@ class JARVIS:
                 # typed commands are already logged by _submit_command in ui.py
                 self._ui.add_to_log("user", text)
 
-            if any(phrase in text for phrase in SLEEP_PHRASES):
+            all_sleep = SLEEP_PHRASES | HINDI_SLEEP_PHRASES
+            if any(phrase in text for phrase in all_sleep):
                 break
 
             # ── think ─────────────────────────────────────────────────────────
@@ -257,7 +283,7 @@ class JARVIS:
 
         # ── farewell ──────────────────────────────────────────────────────────
         print("[JARVIS] ◌  Deactivating…")
-        farewell = _farewell()
+        farewell = _farewell(self._voice.language)
         self._ui.set_state("IDLE")
         self._ui.set_status(farewell)
         self._voice.speak_sync(farewell)
