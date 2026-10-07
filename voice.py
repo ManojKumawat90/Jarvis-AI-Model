@@ -8,6 +8,7 @@ VoiceEngine
 """
 import asyncio
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -54,6 +55,23 @@ def _build_beep() -> np.ndarray:
 
 
 _BEEP_AUDIO = _build_beep()
+
+
+def _clean_for_speech(text: str) -> str:
+    """Strip markdown/code formatting so TTS doesn't read symbols aloud."""
+    text = re.sub(r"```.*?```", " ", text, flags=re.S)          # code blocks
+    text = re.sub(r"`([^`]*)`", r"\1", text)                    # inline code
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)        # [label](url)
+    text = re.sub(r"https?://\S+", "the link", text)            # bare URLs
+    text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.M)    # headings
+    text = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s+", "", text, flags=re.M)  # list markers
+    text = re.sub(r"(\*\*|__|\*|~~)", "", text)                  # emphasis
+    text = re.sub(r"^\s*\|?[-:| ]{3,}\|?\s*$", "", text, flags=re.M)  # table rules
+    text = text.replace("|", ", ").replace("━", "")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{2,}", ". ", text).replace("\n", ". ")
+    text = re.sub(r"(?:\.\s*){2,}", ". ", text)
+    return text.strip()
 
 
 class VoiceEngine:
@@ -155,6 +173,9 @@ class VoiceEngine:
     def speak_sync(self, text: str, interrupt_event: Optional[threading.Event] = None):
         """Speak text; raises InterruptedError if interrupted."""
         self.stop_speaking()
+        text = _clean_for_speech(text)
+        if not text:
+            return
 
         if self._is_hindi(text):
             # Hindi: edge-tts MadhurNeural → macOS Hindi → macOS default

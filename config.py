@@ -1,5 +1,16 @@
 import os
 
+# ── Load .env (no extra dependency; real environment variables take priority) ─
+_ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(_ENV_FILE):
+    with open(_ENV_FILE) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+
 # ── Audio ─────────────────────────────────────────────────────────────────────
 SAMPLE_RATE       = 44100
 CHANNELS          = 1
@@ -38,6 +49,10 @@ Unknown capability → say: "माफ करें Manu sir, यह मेर�
 
 ━━ CONCISENESS ━━
 Be concise in both languages. Wit is welcome; verbosity is not.
+Your replies are SPOKEN ALOUD. Write plain conversational sentences: no markdown,
+bullet lists, tables, code blocks, emoji or raw URLs. Round numbers sensibly
+("about 62 percent", not "62.37%"). One to three sentences unless asked for detail.
+Do not narrate tool use ("let me check…") — just give the answer.
 
 ━━ FULL SYSTEM ACCESS via Bash tool ━━
 Always run bash commands for real, live data. Never guess.
@@ -51,7 +66,7 @@ SYSTEM MONITORING:
 APP CONTROL:
   Open:     open -a "AppName"
   Quit:     osascript -e 'quit app "AppName"'
-  Open apps: osascript -e 'name of every application process whose background only is false' of application "System Events"
+  Open apps: osascript -e 'tell application "System Events" to get name of every application process whose background only is false'
 
 SYSTEM CONTROLS:
   Volume get:   osascript -e 'output volume of (get volume settings)'

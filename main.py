@@ -7,6 +7,7 @@ Interrupt:   double-clap / click STOP / press ESC while JARVIS is thinking or sp
 Exit: Ctrl-C
 """
 import queue
+import re
 import sys
 import threading
 import time
@@ -18,6 +19,34 @@ from clap_detector import ClapDetector, WakeWordDetector
 from voice import VoiceEngine
 from brain import JarvisBrain
 from ui import JarvisUI
+
+
+_ALL_SLEEP = SLEEP_PHRASES | HINDI_SLEEP_PHRASES
+
+
+def _is_sleep_command(text: str) -> bool:
+    """True only when the utterance is genuinely a goodbye.
+
+    Plain substring matching made "shut down Chrome" or "check my sleep
+    settings" deactivate JARVIS. Now: an exact match, or a short utterance
+    that begins/ends with a JARVIS-specific farewell ("goodbye jarvis",
+    "that will be all").
+    """
+    norm = re.sub(r"[^\w\s]", " ", text.lower())
+    norm = " ".join(norm.split())
+    if not norm:
+        return False
+    phrases = {" ".join(re.sub(r"[^\w\s]", " ", p).split()) for p in _ALL_SLEEP}
+    if norm in phrases:
+        return True
+    if len(norm.split()) > 6:
+        return False
+    for p in phrases:
+        specific = "jarvis" in p or "जार्विस" in p or p.startswith("that will be all") \
+            or p == "बस इतना काफी है"
+        if specific and (norm.startswith(p) or norm.endswith(p)):
+            return True
+    return False
 
 
 def _time_period(lang: str = "en") -> str:
@@ -148,6 +177,7 @@ class JARVIS:
                 on_chunk=self._ui.append_response,
                 interrupt_event=self._interrupt,
             )
+            self._ui.set_response(response)
             self._ui.add_to_log("jarvis", response)
             self._ui.set_state("SPEAKING")
             self._clap.pause()
@@ -234,8 +264,7 @@ class JARVIS:
                 # typed commands are already logged by _submit_command in ui.py
                 self._ui.add_to_log("user", text)
 
-            all_sleep = SLEEP_PHRASES | HINDI_SLEEP_PHRASES
-            if any(phrase in text for phrase in all_sleep):
+            if _is_sleep_command(text):
                 break
 
             # ── think ─────────────────────────────────────────────────────────
@@ -256,6 +285,7 @@ class JARVIS:
                 if self._interrupt.is_set():
                     raise InterruptedError
 
+                self._ui.set_response(response)
                 self._ui.add_to_log("jarvis", response)
                 self._ui.set_state("SPEAKING")
                 self._ui.set_status("Speaking…")
@@ -274,10 +304,16 @@ class JARVIS:
                 self._ui.set_status("Cancelled. Ready for your next command, Sir.")
             except Exception as exc:
                 print(f"[JARVIS] ERROR: {exc}")
-                err_msg = "I'm afraid I encountered an error, Sir. Shall I try again?"
+                if self._voice.language == "hi":
+                    err_msg = "माफ करें Manu sir, एक त्रुटि आ गई। क्या मैं दोबारा कोशिश करूँ?"
+                else:
+                    err_msg = "I'm afraid I encountered an error, Sir. Shall I try again?"
                 self._ui.set_status(f"Error — {exc}")
                 self._ui.set_response(err_msg)
-                self._voice.speak_sync(err_msg, interrupt_event=self._interrupt)
+                try:
+                    self._voice.speak_sync(err_msg, interrupt_event=self._interrupt)
+                except InterruptedError:
+                    self._voice.stop_speaking()
             finally:
                 self._busy = False
 
