@@ -92,6 +92,8 @@ class JARVIS:
             on_double_clap=self._on_activate,
             on_wake_word=self._on_activate,
             on_level=self._ui.update_level,
+            on_mic_silent=lambda: self._ui.set_status(
+                "Microphone is silent — grant Mic permission to your terminal, Sir."),
         )
         self._wake = WakeWordDetector(on_wake=self._on_activate)  # no-op stub
         self._ui.on_activate    = self._on_activate

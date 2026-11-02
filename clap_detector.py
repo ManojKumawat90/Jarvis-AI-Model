@@ -30,8 +30,11 @@ class ClapDetector:
         on_double_clap: Callable,
         on_wake_word:   Optional[Callable] = None,
         on_level:       Optional[Callable[[float], None]] = None,
+        on_mic_silent:  Optional[Callable[[], None]] = None,
     ):
         self._clap_cb  = on_double_clap
+        self._silent_cb = on_mic_silent
+        self._peak_rms = 0.0   # loudest frame seen; stays 0.0 if macOS blocks the mic
         self._wake_cb  = on_wake_word
         self._lvl_cb   = on_level
 
@@ -50,6 +53,8 @@ class ClapDetector:
 
     def _audio_callback(self, indata, frames, time_info, status):
         rms = float(np.sqrt(np.mean(indata ** 2)))
+        if rms > self._peak_rms:
+            self._peak_rms = rms
 
         if self._lvl_cb:
             self._lvl_cb(rms)
@@ -131,6 +136,26 @@ class ClapDetector:
         print(f"[Clap] Listening  (threshold={CLAP_THRESHOLD})")
         if self._wake_cb:
             print(f"[WakeWord] Listening  (speech threshold={SPEECH_THRESHOLD})")
+        t = threading.Timer(3.0, self._check_mic_alive)
+        t.daemon = True
+        t.start()
+
+    def _check_mic_alive(self):
+        """macOS returns pure digital silence (not an error) when the terminal
+        lacks Microphone permission. Even a quiet room reads ~0.005, so a peak
+        of exactly 0.0 after a few seconds means the mic is blocked."""
+        if self._stream is None or self._peak_rms > 0.0:
+            return
+        print("\n[Mic] ⚠  WARNING: microphone input is completely silent (all zeros).")
+        print("[Mic]    Clap and voice activation will NOT work.")
+        print("[Mic]    Fix: System Settings → Privacy & Security → Microphone →")
+        print("[Mic]         enable your terminal app, then quit (Cmd-Q) and reopen it.")
+        print("[Mic]    Or run: bash grant_permissions.sh\n")
+        if self._silent_cb:
+            try:
+                self._silent_cb()
+            except Exception as exc:
+                print(f"[Mic] warning callback failed: {exc}")
 
     def stop(self):
         if self._stream:
